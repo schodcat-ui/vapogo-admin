@@ -66,27 +66,47 @@
   function showLogin(message) {
     var email = h("input", { type: "email", autocomplete: "username" });
     var pass = h("input", { type: "password", autocomplete: "current-password" });
+    var otp = h("input", { type: "text", inputmode: "numeric", maxlength: "6", autocomplete: "one-time-code" });
+    var otpBox = h("div", { style: "display:none" }, h("label", {}, "6-digit code emailed to the admin address"), otp);
     var err = h("div", { class: "err" }, message || "");
     var btn = h("button", { class: "btn", type: "button" }, "Log in");
+    var step = 1;
+    function reset() {
+      step = 1; email.disabled = false; pass.disabled = false;
+      otpBox.style.display = "none"; otp.value = ""; btn.textContent = "Log in";
+    }
     function go() {
       btn.disabled = true; err.textContent = "";
-      request("POST", "/auth/login", { email: email.value.trim(), password: pass.value })
+      var body = { email: email.value.trim(), password: pass.value };
+      if (step === 2) body.otp = otp.value.trim();
+      request("POST", "/auth/login", body)
         .then(function (d) {
+          if (d.adminVerification) {
+            step = 2; otpBox.style.display = "block"; btn.textContent = "Verify and log in";
+            email.disabled = true; pass.disabled = true; otp.focus();
+            toast("Code sent to the admin email");
+            return;
+          }
           if (d.user.role !== "ADMIN") { setToken(null); throw new Error("This site is for the administrator only."); }
           setToken(d.token); showConsole();
         })
-        .catch(function (e) { err.textContent = e.message; })
+        .catch(function (e) {
+          err.textContent = e.message;
+          if (step === 2 && /Log in again/.test(e.message)) reset();
+        })
         .then(function () { btn.disabled = false; });
     }
     btn.addEventListener("click", go);
     pass.addEventListener("keydown", function (e) { if (e.key === "Enter") go(); });
+    otp.addEventListener("keydown", function (e) { if (e.key === "Enter") go(); });
     mount(h("div", { class: "login card" },
       h("h2", {}, "VAPOGO Admin"),
       h("p", { class: "muted" }, "Administrator access only."),
       h("label", {}, "Email"), email,
       h("label", {}, "Password"), pass,
+      otpBox,
       err,
-      h("div", { class: "row" }, btn, h("button", { class: "btn ghost", type: "button", onclick: showCreate }, "Create admin account"))
+      h("div", { class: "row" }, btn)
     ));
   }
 
@@ -295,7 +315,10 @@
   }
 
   // ---- start ----
-  if (getToken()) {
+  // first-time setup is not linked from the login page: open  <site>/#setup  once
+  if (location.hash === "#setup" && !getToken()) {
+    showCreate();
+  } else if (getToken()) {
     request("GET", "/admin/overview").then(showConsole).catch(function () { setToken(null); showLogin(); });
   } else {
     showLogin();
